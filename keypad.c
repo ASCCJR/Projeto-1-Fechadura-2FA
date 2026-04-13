@@ -10,13 +10,6 @@
 #include "pico/time.h"       // Para absolute_time_t, get_absolute_time, absolute_time_diff_us
 
 
-// --- Definições Internas do Módulo ---
-
-// Intervalo de debounce para evitar múltiplos registros de uma única tecla.
-// Uma nova tecla só será aceita após este intervalo desde o último toque válido.
-#define DEBOUNCE_INTERVALO_US 150000 // 150ms
-
-
 // --- Variáveis Estáticas Globais (visíveis apenas neste arquivo) ---
 
 // Estado do debounce por borda (edge-trigger):

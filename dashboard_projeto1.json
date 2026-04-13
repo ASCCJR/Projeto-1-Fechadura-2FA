@@ -251,7 +251,7 @@
         "id": "30fe7bc3b7658120",
         "type": "mqtt-broker",
         "name": "",
-        "broker": "10.38.202.6",
+        "broker": "127.0.0.1",
         "port": 1884,
         "clientid": "",
         "autoConnect": true,

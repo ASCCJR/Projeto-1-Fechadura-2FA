@@ -48,15 +48,28 @@
 #endif
 
 #ifndef MQTT_BROKER_IP
-#define MQTT_BROKER_IP "192.168.0.18"
+#define MQTT_BROKER_IP "127.0.0.1"
 #endif
 
 #ifndef MQTT_BROKER_PORT
-#define MQTT_BROKER_PORT 1883
+#define MQTT_BROKER_PORT 1884
 #endif
 
 // --- Tempos ---
 #define TEMPO_MSG_PADRAO_US 4000000 // 4.0 segundos
+
+#ifndef DEBOUNCE_INTERVALO_US
+#define DEBOUNCE_INTERVALO_US 150000 // 150ms
+#endif
+
+// --- Delays de animacao da matriz ---
+#ifndef SUCESSO_FRAME_DELAY_MS
+#define SUCESSO_FRAME_DELAY_MS 120 // ms entre frames da animacao de sucesso
+#endif
+
+#ifndef FOGO_FRAME_DELAY_US
+#define FOGO_FRAME_DELAY_US 100000 // us entre frames da animacao de fogo
+#endif
 
 // --- Topicos MQTT ---
 #define TOPICO_BASE_COMANDO_ESTADO "comando/estado"

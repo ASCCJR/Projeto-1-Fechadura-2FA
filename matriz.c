@@ -20,12 +20,10 @@ static uint32_t matriz_buffer[LED_COUNT] = {0};
 // Variáveis para Animação de Sucesso
 static int sucesso_frame_atual = 0;
 static absolute_time_t sucesso_ultimo_frame_tempo;
-#define SUCESSO_FRAME_DELAY_MS 120
 
 // Variáveis para Animação Fogo
 static bool fogo_ativo = false;
 static absolute_time_t fogo_ultimo_frame_tempo;
-#define FOGO_FRAME_DELAY_US 100000 // Atraso entre frames da animação de fogo
 
 // Variáveis para Animação Círculo de Tempo
 static uint32_t circ_tempo_cor_ativa = 0;

@@ -98,15 +98,18 @@ Boas práticas:
   - publicar em um tópico de teste;
   - assinar o mesmo tópico e validar recebimento.
 
-Exemplo de teste rápido (ajustar porta para 1884 se necessário):
-- Subscriber: `mosquitto_sub -h 127.0.0.1 -p 1883 -t copilot/test -C 1`
-- Publisher: `mosquitto_pub -h 127.0.0.1 -p 1883 -t copilot/test -m ok`
+Exemplo de teste rápido (porta padrão do projeto: 1884):
+- Subscriber: `mosquitto_sub -h 127.0.0.1 -p 1884 -t copilot/test -C 1`
+- Publisher: `mosquitto_pub -h 127.0.0.1 -p 1884 -t copilot/test -m ok`
 
 ### Troubleshooting Wi-Fi e MQTT (obrigatório quando travar em "Conectando MQTT")
 
 Se a placa sair de Wi-Fi e ficar presa em "Conectando MQTT", a IA deve:
 
 1. Verificar IP atual da máquina host e confirmar se bate com `MQTT_BROKER_IP` (preferir `configura_local.h`).
+   - Descobrir IP no Windows: `ipconfig` (linha `Endereço IPv4` na interface Wi-Fi ativa).
+   - Em PowerShell: `(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -like "*Wi-Fi*"}).IPAddress`
+   - O IP muda a cada reconexão de rede; sempre reconfirmar antes de recompilar.
 2. Confirmar que os overrides locais realmente têm prioridade no firmware:
   - em `configura_geral.h`, após incluir `configura_local.h`, os `#define` padrão de `DEVICE_ID`, `MQTT_BROKER_IP` e `MQTT_BROKER_PORT` devem estar protegidos com `#ifndef`;
   - se não estiverem, o firmware pode continuar tentando conectar no IP/porta antigos mesmo com `configura_local.h` correto.
@@ -174,8 +177,14 @@ Critério de sucesso:
 
 ## Passo 6: Gravação na Placa (quando hardware conectado)
 
+Como ativar o modo BOOTSEL (obrigatório para Run Project):
+1. Manter o botão BOOTSEL pressionado (botão pequeno na parte superior da placa Pico/BitDogLab).
+2. Com o botão pressionado, conectar o cabo USB ao computador.
+3. Soltar o botão BOOTSEL — a placa aparece como drive USB `RPI-RP2`.
+4. A task `Run Project` copia o `.uf2` gerado para o drive automaticamente.
+
 Tentar nesta ordem:
-1. Run Project (modo BOOTSEL).
+1. Run Project (modo BOOTSEL, passos acima).
 2. Flash (OpenOCD/CMSIS-DAP).
 
 Se falhar por dispositivo não detectado:
