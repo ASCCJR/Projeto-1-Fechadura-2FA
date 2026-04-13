@@ -24,7 +24,10 @@ static void mqtt_pub_request_cb(void *arg, err_t err);
 static void mqtt_connection_cb(mqtt_client_t *client_inst, void *arg, mqtt_connection_status_t status) {
     (void)arg;
     if (status == MQTT_CONNECT_ACCEPTED) {
-        multicore_fifo_push_blocking(FIFO_CMD_MQTT_CONECTADO << 16);
+        // Push com verificação não-bloqueante para evitar congestionamento do Core 1
+        if (multicore_fifo_wready()) {
+            multicore_fifo_push_blocking(FIFO_CMD_MQTT_CONECTADO << 16);
+        }
         mqtt_set_inpub_callback(client_inst, mqtt_incoming_publish_cb, mqtt_incoming_data_cb, NULL);
         static char topico_comando[100];
         snprintf(topico_comando, sizeof(topico_comando), "%s/%s", DEVICE_ID, TOPICO_BASE_COMANDO_ESTADO);
@@ -45,7 +48,11 @@ static void mqtt_incoming_publish_cb(void *arg, const char *topic, u32_t tot_len
 
 static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t flags) {
     (void)arg;
+    (void)flags;
     char payload[128];
+    if (len >= sizeof(payload)) {
+        return;
+    }
     memcpy(payload, data, len);
     payload[len] = '\0';
 
@@ -55,11 +62,17 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
     if (strcmp(mqtt_incoming_topic, topic_esperado) == 0) {
         if (strcmp(payload, "ADMIN_SENHA") == 0) {
             uint32_t pacote = (FIFO_CMD_MUDAR_ESTADO << 16) | MODO_ADMIN_AGUARDANDO_CARTAO;
-            multicore_fifo_push_blocking(pacote);
+            // Push com verificação não-bloqueante para evitar congestionamento do Core 1
+            if (multicore_fifo_wready()) {
+                multicore_fifo_push_blocking(pacote);
+            }
         }
         else if (strcmp(payload, "INCENDIO") == 0) {
             uint32_t pacote = (FIFO_CMD_MUDAR_ESTADO << 16) | MODO_EMERGENCIA_INCENDIO;
-            multicore_fifo_push_blocking(pacote);
+            // Push com verificação não-bloqueante para evitar congestionamento do Core 1
+            if (multicore_fifo_wready()) {
+                multicore_fifo_push_blocking(pacote);
+            }
         }
     }
 }
@@ -71,11 +84,18 @@ static void mqtt_pub_request_cb(void *arg, err_t err) {
 
 void iniciar_mqtt_cliente() {
     mqtt_client_data = mqtt_client_new();
+    if (!mqtt_client_data) {
+        return;
+    }
+
     char client_id[32];
     snprintf(client_id, sizeof(client_id), "%s_client", DEVICE_ID);
     struct mqtt_connect_client_info_t ci = { .client_id = client_id };
     ip_addr_t broker_ip;
-    ip4addr_aton(MQTT_BROKER_IP, &broker_ip);
+    if (!ip4addr_aton(MQTT_BROKER_IP, &broker_ip)) {
+        return;
+    }
+
     mqtt_client_connect(mqtt_client_data, &broker_ip, MQTT_BROKER_PORT, mqtt_connection_cb, 0, &ci);
 }
 

@@ -1,11 +1,7 @@
 /**
  * @file main.c
- * @brief Gerenciamento principal do sistema BitDogLock.
- * @details Esta versão inclui a sincronização do LED RGB com a animação do
- * círculo de tempo, além de todos os outros ajustes e animações. O código
- * gerencia uma fechadura eletrônica com autenticação de dois fatores (cartão colorido + senha),
- * utilizando um Raspberry Pi Pico. O Núcleo 0 cuida da lógica da fechadura e periféricos,
- * enquanto o Núcleo 1 gerencia a conectividade Wi-Fi e MQTT.
+ * @brief Firmware principal do BitDogLock 2FA.
+ * @details Core 0 executa a maquina de estados e perifericos; Core 1 concentra Wi-Fi e MQTT.
  */
 
 // --- Inclusões de Bibliotecas ---
@@ -38,7 +34,6 @@
 #define TIMEOUT_SENHA_S 15                  // Tempo limite para digitar a senha (15s)
 #define TEMPO_AUTO_TRAVA_S 20               // Tempo para a fechadura travar automaticamente (20s)
 #define DISPLAY_UPDATE_INTERVAL_US 1000000  // Intervalo de atualização do display (1s)
-#define TEMPO_MSG_PADRAO_US 4000000         // Duração de exibição de mensagens padrão (4s)
 #define HEARTBEAT_INTERVAL_US 30000000      // Intervalo para enviar sinal de "estou vivo" via MQTT (30s)
 #define MQTT_PUB_MIN_DELAY_US 50000         // Atraso mínimo entre publicações MQTT para evitar flooding
 
@@ -377,39 +372,38 @@ void handle_modo_aguarda_senha() {
     char tecla = keypad_get_key();
     if (tecla != '\0') { // Se uma tecla foi pressionada
         buzzer_play_tone(1500, 50); // Beep de feedback
-        if (tecla == '#') { // Tecla de confirmação
-            bool senha_valida = false;
-            // Valida a senha digitada contra a senha correta para a cor
-            switch (fechadura.cor_ativa) {
-                case COR_VERDE:    if (strcmp(fechadura.senha_digitada, SENHA_VERDE) == 0) senha_valida = true; break;
-                case COR_VERMELHA: if (strcmp(fechadura.senha_digitada, SENHA_VERMELHA) == 0) senha_valida = true; break;
-                case COR_AZUL:     if (strcmp(fechadura.senha_digitada, SENHA_AZUL) == 0) senha_valida = true; break;
-                default: senha_valida = false; break;
-            }
-            if (senha_valida) {
-                acionar_abertura(); // Senha correta, abre a tranca
-            } else { // Senha incorreta
-                feedback_tocar_erro();
-                display_show_message("ACESSO NEGADO", "Senha Incorreta", NULL);
-                solicitar_publicacao_mqtt(MSG_LOG_ACESSO_FALHA, fechadura.cor_ativa);
-                
-                // SINCRONIZAÇÃO: Define o LED RGB para vermelho, acompanhando a animação de erro.
-                set_rgb_solid(PWM_MAX_DUTY, 0, 0); 
-                
-                fechadura.animacao_erro_ativa = true;
-                fechadura.animacao_digitacao_ativa = false;
-                fechadura.modo_atual = MODO_MSG_ACESSO_NEGADO; // Estado de mensagem de erro
-                fechadura.modo_foi_inicializado = false;
-            }
-        } else if (tecla == '*') { // Tecla de cancelamento
+        if (tecla == '*') { // Tecla de cancelamento
             solicitar_publicacao_mqtt(MSG_LOG_OPERACAO_CANCELADA, fechadura.cor_ativa);
             fechadura.animacao_digitacao_ativa = false;
             fechadura.modo_atual = MODO_ESPERA; // Volta ao início
             fechadura.modo_foi_inicializado = false;
-        } else if (fechadura.digitos_count < (sizeof(fechadura.senha_digitada) - 1)) {
+        } else if (tecla >= '0' && tecla <= '9' && fechadura.digitos_count < (sizeof(fechadura.senha_digitada) - 1)) {
             // Adiciona o dígito pressionado à senha
             fechadura.senha_digitada[fechadura.digitos_count++] = tecla;
             fechadura.senha_digitada[fechadura.digitos_count] = '\0'; // Mantém o terminador nulo
+
+            // Fluxo único: confirma automaticamente ao completar 4 dígitos
+            if (fechadura.digitos_count == 4) {
+                bool senha_valida = false;
+                switch (fechadura.cor_ativa) {
+                    case COR_VERDE:    if (strcmp(fechadura.senha_digitada, SENHA_VERDE) == 0) senha_valida = true; break;
+                    case COR_VERMELHA: if (strcmp(fechadura.senha_digitada, SENHA_VERMELHA) == 0) senha_valida = true; break;
+                    case COR_AZUL:     if (strcmp(fechadura.senha_digitada, SENHA_AZUL) == 0) senha_valida = true; break;
+                    default: senha_valida = false; break;
+                }
+                if (senha_valida) {
+                    acionar_abertura(); // Senha correta, abre a tranca
+                } else {
+                    feedback_tocar_erro();
+                    display_show_message("ACESSO NEGADO", "Senha Incorreta", NULL);
+                    solicitar_publicacao_mqtt(MSG_LOG_ACESSO_FALHA, fechadura.cor_ativa);
+                    set_rgb_solid(PWM_MAX_DUTY, 0, 0);
+                    fechadura.animacao_erro_ativa = true;
+                    fechadura.animacao_digitacao_ativa = false;
+                    fechadura.modo_atual = MODO_MSG_ACESSO_NEGADO;
+                    fechadura.modo_foi_inicializado = false;
+                }
+            }
         }
     }
 }
@@ -503,9 +497,19 @@ void handle_admin_aguardando_nova_senha() {
     char tecla = keypad_get_key();
     if (tecla != '\0') {
         buzzer_play_tone(1500, 50);
-        if (tecla == '#') { // Confirmação da nova senha
-            if (fechadura.digitos_count == 4) { // Verifica se a senha tem exatamente 4 dígitos
-                // Atualiza a variável global correspondente com a nova senha
+        if (tecla == '*') { // Cancelamento
+            display_show_message("--- MODO ADMIN ---", "Operacao Cancelada", "");
+            solicitar_publicacao_mqtt(MSG_LOG_OPERACAO_CANCELADA, COR_NENHUMA);
+            fechadura.modo_atual = MODO_ADMIN_MSG_CANCELADO; // Estado de mensagem temporária
+            fechadura.modo_foi_inicializado = false;
+            fechadura.animacao_digitacao_ativa = false;
+        } else if (tecla >= '0' && tecla <= '9' && fechadura.digitos_count < (sizeof(fechadura.senha_digitada) - 1)) {
+            // Adiciona o dígito à nova senha
+            fechadura.senha_digitada[fechadura.digitos_count++] = tecla;
+            fechadura.senha_digitada[fechadura.digitos_count] = '\0';
+
+            // Fluxo único: salva automaticamente ao completar 4 dígitos
+            if (fechadura.digitos_count == 4) {
                 switch (fechadura.cor_ativa) {
                     case COR_VERDE:    strcpy(SENHA_VERDE, fechadura.senha_digitada); break;
                     case COR_VERMELHA: strcpy(SENHA_VERMELHA, fechadura.senha_digitada); break;
@@ -514,29 +518,12 @@ void handle_admin_aguardando_nova_senha() {
                 }
                 display_show_message("SUCESSO!", "Senha Salva.", NULL);
                 feedback_tocar_sucesso();
-                set_rgb_solid(0, PWM_MAX_DUTY, 0); // LED verde para sucesso
+                set_rgb_solid(0, PWM_MAX_DUTY, 0);
                 solicitar_publicacao_mqtt(MSG_LOG_ADMIN_SENHA_ALTERADA, fechadura.cor_ativa);
-                fechadura.modo_atual = MODO_ADMIN_MSG_SUCESSO; // Estado de mensagem temporária
-                fechadura.modo_foi_inicializado = false;
-                fechadura.animacao_digitacao_ativa = false;
-            } else { // Erro, senha não tem 4 dígitos
-                display_show_message("ERRO", "Senha 4 digitos!", NULL);
-                feedback_tocar_erro();
-                set_rgb_solid(PWM_MAX_DUTY, 0, 0); // LED vermelho para erro
-                fechadura.modo_atual = MODO_ADMIN_MSG_ERRO_FORMATO; // Estado de mensagem de erro
+                fechadura.modo_atual = MODO_ADMIN_MSG_SUCESSO;
                 fechadura.modo_foi_inicializado = false;
                 fechadura.animacao_digitacao_ativa = false;
             }
-        } else if (tecla == '*') { // Cancelamento
-            display_show_message("--- MODO ADMIN ---", "Operacao Cancelada", "");
-            solicitar_publicacao_mqtt(MSG_LOG_OPERACAO_CANCELADA, COR_NENHUMA);
-            fechadura.modo_atual = MODO_ADMIN_MSG_CANCELADO; // Estado de mensagem temporária
-            fechadura.modo_foi_inicializado = false;
-            fechadura.animacao_digitacao_ativa = false;
-        } else if (fechadura.digitos_count < (sizeof(fechadura.senha_digitada) - 1)) {
-            // Adiciona o dígito à nova senha
-            fechadura.senha_digitada[fechadura.digitos_count++] = tecla;
-            fechadura.senha_digitada[fechadura.digitos_count] = '\0';
         }
     }
 }
@@ -840,6 +827,7 @@ void funcao_wifi_nucleo1() {
                 uint8_t tipo_msg = valor & 0xFF;
                 uint8_t cor_id = (valor >> 8) & 0xFF;
                 char msg_buffer[100], cor_str[15], base_topic[100];
+                bool mensagem_valida = false;
 
                 // Converte o ID da cor em uma string
                 switch ((enum CorDetectada)cor_id) {
@@ -852,32 +840,35 @@ void funcao_wifi_nucleo1() {
                 // Monta a mensagem e o tópico com base no tipo de mensagem
                 switch ((enum MQTT_MSG_TYPE)tipo_msg) {
                     // Mensagens de Status
-                    case MSG_STATUS_AGUARDANDO_CARTAO: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Aguardando cartao"); break;
-                    case MSG_STATUS_CARTAO_LIDO: strcpy(base_topic, TOPICO_STATUS); sprintf(msg_buffer, "Cartao %s lido", cor_str); break;
-                    case MSG_STATUS_AGUARDANDO_SENHA: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Aguardando senha"); break;
-                    case MSG_STATUS_SISTEMA_ABERTO: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Sistema Aberto"); break;
-                    case MSG_STATUS_SISTEMA_FECHADO: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Sistema Fechado"); break;
-                    case MSG_STATUS_MODO_ADMIN: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Modo Administracao"); break;
+                    case MSG_STATUS_AGUARDANDO_CARTAO: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Aguardando cartao"); mensagem_valida = true; break;
+                    case MSG_STATUS_CARTAO_LIDO: strcpy(base_topic, TOPICO_STATUS); sprintf(msg_buffer, "Cartao %s lido", cor_str); mensagem_valida = true; break;
+                    case MSG_STATUS_AGUARDANDO_SENHA: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Aguardando senha"); mensagem_valida = true; break;
+                    case MSG_STATUS_SISTEMA_ABERTO: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Sistema Aberto"); mensagem_valida = true; break;
+                    case MSG_STATUS_SISTEMA_FECHADO: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Sistema Fechado"); mensagem_valida = true; break;
+                    case MSG_STATUS_MODO_ADMIN: strcpy(base_topic, TOPICO_STATUS); strcpy(msg_buffer, "Modo Administracao"); mensagem_valida = true; break;
                     // Mensagens de Log/Histórico
-                    case MSG_LOG_ACESSO_OK: strcpy(base_topic, TOPICO_HISTORICO); sprintf(msg_buffer, "ACESSO LIBERADO: Cartao %s.", cor_str); break;
-                    case MSG_LOG_ACESSO_FALHA: strcpy(base_topic, TOPICO_HISTORICO); sprintf(msg_buffer, "FALHA: Senha incorreta para o Cartao %s.", cor_str); break;
-                    case MSG_LOG_EVENTO_TIMEOUT_SENHA: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "AVISO: Timeout para digitacao da senha."); break;
-                    case MSG_LOG_EVENTO_AUTO_LOCK: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "EVENTO: Travamento automatico do sistema."); break;
-                    case MSG_LOG_OPERACAO_CANCELADA: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "AVISO: Operacao cancelada pelo usuario."); break;
-                    case MSG_LOG_ADMIN_INICIADO: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "ADMIN: Modo de alteracao de senha iniciado."); break;
-                    case MSG_LOG_ADMIN_SENHA_ALTERADA: strcpy(base_topic, TOPICO_HISTORICO); sprintf(msg_buffer, "ADMIN: Senha para Cartao %s foi alterada.", cor_str); break;
-                    case MSG_LOG_EMERGENCIA_INCENDIO_ON: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "EMERGENCIA: Alarme de incendio ATIVADO."); break;
-                    case MSG_LOG_EMERGENCIA_INCENDIO_OFF: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "EMERGENCIA: Alarme de incendio desativado."); break;
-                    case MSG_LOG_HEARTBEAT: strcpy(base_topic, TOPICO_HEARTBEAT); strcpy(msg_buffer, "ok"); break;
+                    case MSG_LOG_ACESSO_OK: strcpy(base_topic, TOPICO_HISTORICO); sprintf(msg_buffer, "ACESSO LIBERADO: Cartao %s.", cor_str); mensagem_valida = true; break;
+                    case MSG_LOG_ACESSO_FALHA: strcpy(base_topic, TOPICO_HISTORICO); sprintf(msg_buffer, "FALHA: Senha incorreta para o Cartao %s.", cor_str); mensagem_valida = true; break;
+                    case MSG_LOG_EVENTO_TIMEOUT_SENHA: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "AVISO: Timeout para digitacao da senha."); mensagem_valida = true; break;
+                    case MSG_LOG_EVENTO_AUTO_LOCK: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "EVENTO: Travamento automatico do sistema."); mensagem_valida = true; break;
+                    case MSG_LOG_OPERACAO_CANCELADA: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "AVISO: Operacao cancelada pelo usuario."); mensagem_valida = true; break;
+                    case MSG_LOG_ADMIN_INICIADO: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "ADMIN: Modo de alteracao de senha iniciado."); mensagem_valida = true; break;
+                    case MSG_LOG_ADMIN_SENHA_ALTERADA: strcpy(base_topic, TOPICO_HISTORICO); sprintf(msg_buffer, "ADMIN: Senha para Cartao %s foi alterada.", cor_str); mensagem_valida = true; break;
+                    case MSG_LOG_EMERGENCIA_INCENDIO_ON: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "EMERGENCIA: Alarme de incendio ATIVADO."); mensagem_valida = true; break;
+                    case MSG_LOG_EMERGENCIA_INCENDIO_OFF: strcpy(base_topic, TOPICO_HISTORICO); strcpy(msg_buffer, "EMERGENCIA: Alarme de incendio desativado."); mensagem_valida = true; break;
+                    case MSG_LOG_HEARTBEAT: strcpy(base_topic, TOPICO_HEARTBEAT); strcpy(msg_buffer, "ok"); mensagem_valida = true; break;
+                    default: break;
                 }
                 
                 // Adiciona a mensagem à fila se houver espaço
-                int next_tail = (queue_tail + 1) % QUEUE_SIZE;
-                if (next_tail != queue_head) { // Verifica se a fila não está cheia
-                    snprintf(publication_queue[queue_tail].topico, sizeof(publication_queue[queue_tail].topico), "%s/%s", DEVICE_ID, base_topic);
-                    strncpy(publication_queue[queue_tail].mensagem, msg_buffer, sizeof(publication_queue[queue_tail].mensagem) - 1);
-                    publication_queue[queue_tail].mensagem[sizeof(publication_queue[queue_tail].mensagem) - 1] = '\0';
-                    queue_tail = next_tail;
+                if (mensagem_valida) {
+                    int next_tail = (queue_tail + 1) % QUEUE_SIZE;
+                    if (next_tail != queue_head) { // Verifica se a fila não está cheia
+                        snprintf(publication_queue[queue_tail].topico, sizeof(publication_queue[queue_tail].topico), "%s/%s", DEVICE_ID, base_topic);
+                        strncpy(publication_queue[queue_tail].mensagem, msg_buffer, sizeof(publication_queue[queue_tail].mensagem) - 1);
+                        publication_queue[queue_tail].mensagem[sizeof(publication_queue[queue_tail].mensagem) - 1] = '\0';
+                        queue_tail = next_tail;
+                    }
                 }
             }
         }

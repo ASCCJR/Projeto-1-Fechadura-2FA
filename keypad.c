@@ -14,13 +14,18 @@
 
 // Intervalo de debounce para evitar múltiplos registros de uma única tecla.
 // Uma nova tecla só será aceita após este intervalo desde o último toque válido.
-#define DEBOUNCE_INTERVALO_US 200000 // 200ms
+#define DEBOUNCE_INTERVALO_US 150000 // 150ms
 
 
 // --- Variáveis Estáticas Globais (visíveis apenas neste arquivo) ---
 
-// Variável para controlar o tempo do último toque válido, usada para o debounce.
-static absolute_time_t ultimo_toque_valido;
+// Estado do debounce por borda (edge-trigger):
+// - leitura_bruta_anterior: última leitura instantânea do hardware
+// - tecla_estavel: estado já estabilizado após debounce
+// - instante_ultima_mudanca: momento da última mudança na leitura bruta
+static char leitura_bruta_anterior;
+static char tecla_estavel;
+static absolute_time_t instante_ultima_mudanca;
 
 // Mapeamento dos pinos das linhas (ROWs) e colunas (COLs) do teclado.
 // Estes pinos são definidos em configura_geral.h.
@@ -36,6 +41,24 @@ const char keymap[4][4] = {
     {'*', '7', '4', '1'}  // Linha 3
 };
 
+/**
+ * @brief Faz uma varredura bruta do teclado (sem debounce).
+ * @return Tecla detectada ou '\0' se nenhuma tecla estiver pressionada.
+ */
+static char keypad_scan_raw(void) {
+    for (int c = 0; c < 4; c++) {
+        gpio_put(COL_PINS[c], 0);
+        for (int r = 0; r < 4; r++) {
+            if (!gpio_get(ROW_PINS[r])) {
+                gpio_put(COL_PINS[c], 1);
+                return keymap[r][c];
+            }
+        }
+        gpio_put(COL_PINS[c], 1);
+    }
+    return '\0';
+}
+
 
 // --- Implementação das Funções Públicas ---
 
@@ -45,9 +68,11 @@ const char keymap[4][4] = {
  * Inicia o timer de debounce.
  */
 void keypad_init() {
-    // Inicializa o timer do debounce com o tempo atual do sistema.
-    // Isso permite que a primeira tecla seja registrada imediatamente.
-    ultimo_toque_valido = get_absolute_time();
+    // Inicializa o estado do debounce por borda.
+    absolute_time_t agora = get_absolute_time();
+    leitura_bruta_anterior = '\0';
+    tecla_estavel = '\0';
+    instante_ultima_mudanca = agora;
 
     // Configura os pinos das linhas (ROWs) como entrada com resistor de pull-up interno.
     // O pull-up garante que a linha esteja em nível ALTO quando nenhuma tecla é pressionada.
@@ -74,32 +99,27 @@ void keypad_init() {
  */
 char keypad_get_key() {
     absolute_time_t agora = get_absolute_time();
+    char leitura_bruta = keypad_scan_raw();
 
-    // 1. Lógica de Debounce: Verifica se o intervalo mínimo desde o último toque válido passou.
-    if (absolute_time_diff_us(ultimo_toque_valido, agora) < DEBOUNCE_INTERVALO_US) {
-        return '\0'; // Intervalo mínimo não passou, ignora leitura para evitar múltiplos toques
+    // 1. Se a leitura bruta mudou, reinicia a janela de debounce.
+    if (leitura_bruta != leitura_bruta_anterior) {
+        leitura_bruta_anterior = leitura_bruta;
+        instante_ultima_mudanca = agora;
+        return '\0';
     }
 
-    // 2. Lógica de Varredura (Scanning): Percorre as colunas e verifica as linhas.
-    for (int c = 0; c < 4; c++) { // Loop através das 4 colunas
-        gpio_put(COL_PINS[c], 0); // Ativa a coluna atual (coloca em nível BAIXO)
+    // 2. Aguarda a leitura ficar estável pelo tempo de debounce.
+    if (absolute_time_diff_us(instante_ultima_mudanca, agora) < DEBOUNCE_INTERVALO_US) {
+        return '\0';
+    }
 
-        // Varre as 4 linhas para ver se alguma foi puxada para nível BAIXO pela coluna ativa.
-        for (int r = 0; r < 4; r++) {
-            if (!gpio_get(ROW_PINS[r])) { // Se a linha está em LOW, significa que uma tecla foi pressionada
-                // Tecla encontrada!
-
-                gpio_put(COL_PINS[c], 1); // Desativa a coluna atual para liberar o pino (muito importante!)
-                
-                ultimo_toque_valido = agora; // Atualiza o tempo do último toque válido para o debounce
-                
-                return keymap[r][c]; // Retorna o caractere correspondente da tecla pressionada
-            }
+    // 3. Gera evento apenas na borda de subida (tecla pressionada), não em repetição por tecla segurada.
+    if (tecla_estavel != leitura_bruta) {
+        tecla_estavel = leitura_bruta;
+        if (tecla_estavel != '\0') {
+            return tecla_estavel;
         }
-
-        gpio_put(COL_PINS[c], 1); // Desativa a coluna atual antes de testar a próxima
     }
 
-    // Se o loop terminar sem encontrar uma tecla pressionada, retorna '\0'.
     return '\0';
 }

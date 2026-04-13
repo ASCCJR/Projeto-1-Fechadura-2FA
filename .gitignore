@@ -1,2 +1,4 @@
 build/
 .vscode/
+secrets.local.h
+configura_local.h
