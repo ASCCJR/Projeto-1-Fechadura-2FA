@@ -75,6 +75,8 @@ Para reproduzir este projeto, você precisará da plataforma **BitDogLab** equip
 
 Para facilitar o uso do projeto em clones novos, este repositório inclui o arquivo `.github/copilot-instructions.md`, que orienta o GitHub Copilot Chat a executar um fluxo de preparação e validação do ambiente.
 
+**Passo obrigatório antes de build/flash:** executar `powershell -ExecutionPolicy Bypass -File .\scripts\preflight-demo.ps1`. Se qualquer etapa retornar **FAIL**, interromper o fluxo e corrigir o ambiente antes de prosseguir.
+
 No contexto deste projeto, o fluxo assistido contempla:
 
 1. Criação/validação de arquivos locais por máquina (`secrets.local.h` e `configura_local.h`).
