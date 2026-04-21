@@ -36,7 +36,7 @@ function Set-DefineMacro {
         [bool]$Quoted
     )
 
-    $replacement = if ($Quoted) { "#define $Name `\"$Value`\"" } else { "#define $Name $Value" }
+    $replacement = if ($Quoted) { ('#define {0} "{1}"' -f $Name, $Value) } else { "#define $Name $Value" }
     $regex = "(?m)^\s*#define\s+" + [regex]::Escape($Name) + "\s+.+$"
 
     if ([regex]::IsMatch($Content, $regex)) {
@@ -100,8 +100,8 @@ if (-not (Test-Path $configLocal)) {
             "#ifndef CONFIGURA_LOCAL_H",
             "#define CONFIGURA_LOCAL_H",
             "",
-            "#define DEVICE_ID \"bitdoglab_02\"",
-            "#define MQTT_BROKER_IP \"127.0.0.1\"",
+            '#define DEVICE_ID "bitdoglab_02"',
+            '#define MQTT_BROKER_IP "127.0.0.1"',
             "#define MQTT_BROKER_PORT 1884",
             "",
             "#endif // CONFIGURA_LOCAL_H"
@@ -115,7 +115,7 @@ $configText = Set-DefineMacro -Content $configText -Name "DEVICE_ID" -Value $Dev
 $configText = Set-DefineMacro -Content $configText -Name "MQTT_BROKER_IP" -Value $hostIp -Quoted $true
 $configText = Set-DefineMacro -Content $configText -Name "MQTT_BROKER_PORT" -Value $BrokerPort -Quoted $false
 Set-Content -Path $configLocal -Value $configText -Encoding utf8
-$results.Add([pscustomobject]@{ Step = "configura_local.h"; Status = "OK"; Detail = "$hostIp:$BrokerPort" })
+$results.Add([pscustomobject]@{ Step = "configura_local.h"; Status = "OK"; Detail = "${hostIp}:$BrokerPort" })
 
 if (-not (Test-Path $mosqConf)) {
     @(
